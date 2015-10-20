@@ -1,0 +1,6 @@
+
+# Run argo-msg-cache if enabled via the argo-msg-cache-nrpe-config init.d script.
+0 * * * * root [ -f /var/lock/subsys/argo-msg-cache ] && sleep `expr $RANDOM \% 300` && ( /usr/sbin/argo-msg-cache 2>&1 | gawk '{print strftime(), ":", $0}'  >> /var/log/argo-msg-cache.log  )
+
+
+

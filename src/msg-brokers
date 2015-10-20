@@ -1,0 +1,430 @@
+#!/usr/bin/perl
+#+##############################################################################
+#                                                                              #
+# File: msg-brokers                                                            #
+#                                                                              #
+# Description: manipulate messaging brokers information                        #
+#                                                                              #
+#-##############################################################################
+
+#
+# modules
+#
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Net::LDAP;
+use Net::STOMP::Client;
+use Pod::Usage;
+use Time::HiRes qw();
+
+#
+# constants
+#
+
+use constant LDAP_TIMEOUT  => 10;
+use constant STOMP_TIMEOUT =>  5;
+
+#
+# global variables
+#
+
+our($Action, %Option);
+
+#
+# report a debugging message
+#
+
+sub debug ($$@) {
+    my($level, $format, @arguments) = @_;
+    my($message);
+
+    return unless $Option{debug} >= $level;
+    $message = sprintf($format, @arguments);
+    $message =~ s/\s+$//;
+    print(STDERR "# $message\n");
+}
+
+#
+# report a warning message
+#
+
+sub warning ($@) {
+    my($format, @arguments) = @_;
+    my($message);
+
+    return if $Option{quiet};
+    $message = sprintf($format, @arguments);
+    $message =~ s/\s+$//;
+    print(STDERR "* $message\n");
+}
+
+#
+# report a fatal error
+#
+
+sub fatal ($@) {
+    my($format, @arguments) = @_;
+    my($message);
+
+    $message = sprintf($format, @arguments);
+    $message =~ s/\s+$//;
+    die("msg-brokers: $message\n");
+}
+
+#
+# initialise everything
+#
+
+sub init () {
+    # defaults
+    $Option{bdii} = $ENV{LCG_GFAL_INFOSYS};
+    $Option{debug} = 0;
+    # options parsing
+    GetOptions(
+        "bdii=s"    => \$Option{bdii},
+        "cache=s"   => \$Option{cache},
+        "debug|d+"  => \$Option{debug},
+        "help|h|?"  => \$Option{help},
+        "manual|m"  => \$Option{manual},
+        "network=s" => \$Option{network},
+        "quiet|q"   => \$Option{quiet},
+        "sort|s"    => \$Option{sort},
+    ) or pod2usage(2);
+    pod2usage(1) if $Option{help};
+    pod2usage(exitstatus => 0, verbose => 2) if $Option{manual};
+    # action parsing
+    pod2usage(2) unless @ARGV;
+    if ($ARGV[0] =~ /^(check|find|list)$/) {
+	$Action = shift(@ARGV);
+	pod2usage(2) if $Action ne "check" and @ARGV;
+    } else {
+	warn("Unknown action: $ARGV[0]\n");
+	pod2usage(2);
+    }
+    # Net::STOMP::Client errors should not use die()
+    $Net::STOMP::Client::Error::Die = 0;
+    # optionally set Net::STOMP::Client debugging level
+    $Net::STOMP::Client::Debug::Flags = -1 if $Option{debug} > 2;
+}
+
+#
+# connect to the BDII and return the corresponding Net::LDAP object
+#
+
+sub connect_bdii () {
+    my($bdii, @list, $ldap, $mesg);
+
+    $bdii = $Option{bdii};
+    fatal("unspecified BDII (use --bdii or set \$LCG_GFAL_INFOSYS)")
+	unless $bdii;
+    if ($bdii =~ /[\,\;]/) {
+	# list of BDIIs
+	@list = split(/[\,\;]+/, $bdii);
+	debug(1, "using BDII list %s", "@list");
+    } else {
+	# single BDII
+	@list = ($bdii);
+	debug(1, "using single BDII %s", $bdii);
+    }
+    foreach $bdii (@list) {
+	$ldap = Net::LDAP->new($bdii,
+            port    => 2170,
+            timeout => LDAP_TIMEOUT,
+            async   => 1,
+        );
+	last if $ldap;
+	if (@list == 1) {
+	    fatal("could not connect to BDII %s: %s", $bdii, $@);
+	} else {
+	    warning("could not connect to BDII %s: %s", $bdii, $@);
+	}
+    }
+    fatal("could not connect to any BDII") unless $ldap;
+    debug(1, "connected to BDII %s", $ldap->{net_ldap_uri});
+    $mesg = $ldap->bind(anonymous => 1);
+    fatal("could not bind to BDII %s: %s", $ldap->{net_ldap_uri}, $mesg->error())
+	if $mesg->code();
+    return($ldap);
+}
+
+#
+# search the BDII and return the corresponding results
+#
+
+sub search_bdii ($%) {
+    my($ldap, %option) = @_;
+    my($mesg);
+
+    $option{base} = "o=grid";
+    $option{timelimit} = LDAP_TIMEOUT;
+    $mesg = $ldap->search(%option);
+    fatal("could not search BDII %s: %s", $ldap->{net_ldap_uri}, $mesg->error())
+	if $mesg->code();
+    return($mesg->entries());
+}
+
+#
+# query the BDII and return the list of matching messaging broker URIs
+#
+
+sub list_brokers () {
+    my($ldap, %search, $endpoint, $match, $network, $value, @uris);
+
+    $ldap = connect_bdii();
+    %search = (
+        filter => "(&(objectClass=GlueService)(GlueServiceType=msg.broker.stomp))",
+        attrs  => [ qw(GlueServiceEndpoint GlueServiceUniqueID) ],
+    );
+    foreach $endpoint (search_bdii($ldap, %search)) {
+	$value = $endpoint->get_value("GlueServiceUniqueID");
+	debug(2, " found endpoint %s", $value);
+	%search = (
+            filter => "(&(GlueServiceDataKey=cluster)(GlueChunkKey=GlueServiceUniqueID=$value))",
+            attrs  => [ qw(GlueServiceDataValue) ],
+	);
+	$match = 0;
+	foreach $network (search_bdii($ldap, %search)) {
+	    $value = $network->get_value("GlueServiceDataValue");
+	    debug(2, "  found network %s", $value);
+	    next if defined($Option{network}) and $Option{network} ne $value;
+	    $match++;
+	}
+	$value = $endpoint->get_value("GlueServiceEndpoint");
+	if ($match) {
+	    push(@uris, $value);
+	    debug(2, "  keep URI %s", $value);
+	} else {
+	    debug(2, "  skip URI %s", $value);
+	}
+    }
+    debug(1, "got %d broker URIs from BDII", scalar(@uris));
+    warning("got an empty brokers list from BDII") unless @uris;
+    return(@uris);
+}
+
+#
+# fully test the given STOMP broker by sending a test message to a temporary queue
+# return the total elapsed time (in milliseconds) on success, false on failure
+#
+
+sub test_broker ($) {
+    my($uri) = @_;
+    my($broker, $time, $dest, $cookie, $ok, $sid, $ms);
+
+    debug(1, "testing broker %s", $uri);
+    # connect
+    $broker = Net::STOMP::Client->new(uri => $uri, timeout => STOMP_TIMEOUT);
+    unless ($broker and
+	    $broker->connect()) {
+	warning($Net::STOMP::Client::Error::Message);
+	return();
+    }
+    # test
+    $dest = "/temp-queue/meaningless";
+    $sid = $broker->uuid();
+    $cookie = substr($sid . ("RndStr" x 680), 0, 4096);
+    $ok = 0;
+    $broker->message_callback(sub {
+	my($self, $frame) = @_;
+	$ok++ if $frame->body() eq $cookie;
+	return(1);
+    });
+    $time = Time::HiRes::time();
+    unless ($broker->subscribe(destination => $dest, id => $sid) and
+	    $broker->send(destination => $dest, body => $cookie) and
+	    defined($broker->wait_for_frames(callback => sub {return($ok)},
+					     timeout => STOMP_TIMEOUT)) and
+	    $broker->unsubscribe(id => $sid)) {
+	warning($Net::STOMP::Client::Error::Message);
+	return();
+    }
+    $ms = int((Time::HiRes::time() - $time) * 1000.0 + 0.5);
+    unless ($ok) {
+	warning("weird: failed to receive our test message!");
+	return();
+    }
+    # disconnect
+    unless ($broker->disconnect()) {
+	warning($Net::STOMP::Client::Error::Message);
+	return();
+    }
+    debug(1, "successfully connected to broker %s:%d (%d ms)",
+	  $broker->host(), $broker->port(), $ms);
+    return($ms || 1);
+}
+
+#
+# filter and sort a list of brokers
+#
+
+sub filter_brokers (@) {
+    my(@list) = @_;
+    my($uri, $time, %seen);
+
+    return(grep(test_broker($_), @list)) unless $Option{sort};
+    foreach $uri (@list) {
+	$time = test_broker($uri);
+	$seen{$uri} = $time if $time;
+    }
+    return(sort({ $seen{$a} <=> $seen{$b} } keys(%seen)));
+}
+
+#
+# report the final list of messaging broker URIs
+#
+
+sub report_brokers (@) {
+    my(@list) = @_;
+    my($uri, $fh);
+
+    unless (defined($Option{cache})) {
+	# report only to STDOUT
+	foreach $uri (@list) {
+	    print("$uri\n");
+	}
+	return;
+    }
+    unless (@list) {
+	# no brokers so no cache update
+	warning("no brokers found so cache file not updated");
+	return;
+    }
+    # update the cache file
+    open($fh, ">", $Option{cache})
+	or fatal("cannot open %s: %s", $Option{cache}, $!);
+    foreach $uri (@list) {
+	print($fh "$uri\n");
+    }
+    close($fh)
+	or fatal("cannot close %s: %s", $Option{cache}, $!);
+    debug(1, "cache %s updated with %d brokers", $Option{cache}, scalar(@list));
+}
+
+#
+# main part
+#
+
+sub main () {
+    my(@list);
+
+    if ($Action eq "list") {
+	@list = list_brokers();
+    } elsif ($Action eq "find") {
+	@list = filter_brokers(list_brokers());
+    } elsif ($Action eq "check") {
+	if (@ARGV) {
+	    @list = filter_brokers(@ARGV);
+	} elsif (not -t STDIN) {
+	    chomp(@list = <STDIN>);
+	    @list = filter_brokers(@list);
+	} else {
+	    warn("URIs must be given on STDIN or on command line\n");
+	    pod2usage(2);
+	}
+    } else {
+	fatal("unexpected action: %s", $Action);
+    }
+    report_brokers(@list);
+}
+
+#
+# just do it
+#
+
+init();
+main();
+
+__END__
+
+=head1 NAME
+
+msg-brokers - manipulate messaging brokers information
+
+=head1 SYNOPSIS
+
+B<msg-brokers> [I<OPTIONS>] B<find>|B<list>
+
+B<msg-brokers> [I<OPTIONS>] B<check> [I<URIS>]
+
+=head1 DESCRIPTION
+
+B<msg-brokers> has three different modes of operation. In all cases,
+it manipulates information about messaging brokers and reports a
+(possibly empty) list of broker URIs, one per line.
+
+=over
+
+=item B<list>
+
+list all the URIs declared in the BDII, optionally filtered by network
+
+=item B<check>
+
+check (by sending a test message to a temporary queue) the given URIs
+(on command line or STDIN) and report only the ones that are working
+
+=item B<find>
+
+combine the B<list> and B<check> functionalities described above
+
+=back
+
+A fatal error (e.g. cannot contact the BDII) will halt the program.
+A warning (e.g. a given URI cannot be contacted) will be reported
+unless B<--quiet> is used. Both will be sent to STDERR.
+
+The exit status will be 0 on success (with or without warnings) or
+different from 0 in case of a fatal error.
+
+=head1 OPTIONS
+
+=over
+
+=item B<--bdii> I<string>
+
+specify the I<name> or I<name>:I<port> of the BDII to contact;
+this can also be a list, separated by commas or semicolons;
+if not set, it defaults to $LCG_GFAL_INFOSYS
+
+=item B<--cache> I<path>
+
+specify the path of a file to update with the list of URIs;
+if this is set, nothing will be printed on STDOUT;
+note: if the list is empty, the file will I<not> be updated
+
+=item B<--debug>, B<-d>
+
+report debugging information;
+can be used multiple times for increased verbosity
+
+=item B<--help>, B<-h>, B<-?>
+
+show some help
+
+=item B<--manual>, B<-m>
+
+show the complete man page
+
+=item B<--network> I<string>
+
+consider only the brokers for this network
+
+=item B<--quiet>, B<-q>
+
+supress the printing of warnings
+
+=item B<--sort>, B<-s>
+
+sort the brokers per elapsed time to perform the test
+
+=back
+
+=head1 SEE ALSO
+
+L<Net::STOMP::Client>
+
+=head1 AUTHOR
+
+Lionel Cons L<http://cern.ch/lionel.cons>

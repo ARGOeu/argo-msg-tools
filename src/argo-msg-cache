@@ -1,0 +1,76 @@
+#!/bin/sh
+#
+# update the local caches containing the list of working brokers
+#
+
+# read the configuration file
+
+conf=/etc/broker-cache-file.conf
+if [ ! -f $conf ]; then
+    echo "$conf does not exist"
+    exit 1
+fi
+. $conf
+if [ -z "$LCG_GFAL_INFOSYS" ]; then
+    echo "LCG_GFAL_INFOSYS is not set in $conf"
+    exit 1
+fi
+if [ -z "$BROKER_NETWORK" ]; then
+    echo "BROKER_NETWORK is not set in $conf"
+    exit 1
+fi
+cache=${BROKER_LIST:-/var/cache/msg/broker-cache-file/broker-list}
+good=${BROKER_GOOD:-/var/cache/msg/broker-cache-file/broker}
+
+# execute msg-brokers
+
+rm -f $cache.new
+msg-brokers --bdii $LCG_GFAL_INFOSYS --network $BROKER_NETWORK \
+    --cache $cache.new --sort find > $cache.tmp 2>&1
+if [ $? -ne 0 ]; then
+    echo "msg-brokers failed:"
+    cat $cache.tmp
+    rm -f $cache.tmp $cache.new
+    exit 1
+fi
+if [ ! -s $cache.new ]; then
+    echo "msg-brokers did not find any usable brokers"
+    cat $cache.tmp
+    rm -f $cache.tmp $cache.new
+    exit 1
+fi
+rm -f $cache.tmp
+chmod 644 $cache.new
+
+# update the broker list cache
+
+if [ -f $cache ]; then
+    if `cmp -s $cache $cache.new`; then
+	rm -f $cache.new
+    else
+	cp -f $cache $cache.old
+	mv -f $cache.new $cache
+	echo "$cache updated with:"
+	cat $cache
+    fi
+else
+    mv -f $cache.new $cache
+    echo "$cache created with:"
+    cat $cache
+fi
+
+# update the good broker cache
+
+if [ -f $good ]; then
+    ok=`comm -12 $cache $good`
+    if [ -z "$ok" ]; then
+        rm -f $good
+        head -1 $cache > $good
+        chmod 644 $good
+    fi
+else
+    head -1 $cache > $good
+    chmod 644 $good
+fi
+
+exit 0

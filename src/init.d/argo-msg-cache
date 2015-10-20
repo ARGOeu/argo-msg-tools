@@ -1,0 +1,82 @@
+#!/bin/bash
+
+# argo-msg-cache  -  This shell script queries BDII for a good broker endpoint.
+#
+# Author:       steve.traylen@cern.ch
+#
+# chkconfig:    345 89 10
+#
+# description:  Enable a run of argo-msg-cache cron.
+# processname:  argo-msg-cache
+# config: /etc/sysconfig/argo-msg-cache
+
+
+# source function library
+. /etc/rc.d/init.d/functions
+
+lockfile=/var/lock/subsys/argo-msg-cache
+
+RETVAL=0
+
+start() {
+        echo -n $"Running argo-msg-cache: "
+        /usr/sbin/argo-msg-cache > /dev/null 2>&1 && success || failure
+        echo
+        echo -n $"Enabling argo-msg-cache cron: "
+        touch "$lockfile" && success || failure
+        RETVAL=$?
+        echo
+}
+
+stop() {
+        echo -n $"Disabling argo-msg-cache cron: "
+        rm -f "$lockfile" && success || failure
+        RETVAL=$?
+        echo
+}
+
+reload() {
+        echo -n $"Running argo-msg-cache: "
+        /usr/sbin/argo-msg-cache > /dev/null 2>&1 && success || failure
+        echo
+}
+
+restart() {
+        stop
+        start
+}
+
+case "$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  restart|force-reload)
+        restart
+        ;;
+  reload)
+        reload
+        ;;
+  condrestart)
+        [ -f "$lockfile" ] && restart
+        ;;
+  status)
+        if [ -f $lockfile ]; then
+                echo $"Cron argo-msg-cache is enabled."
+                RETVAL=0
+        else
+                echo $"Cron argo-msg-cache is disabled."
+                RETVAL=3
+        fi
+        ;;
+  *)
+        echo $"Usage: $0 {start|stop|status|restart|reload|force-reload|
+condrestart}"
+        exit 1
+esac
+
+exit $RETVAL
+
+

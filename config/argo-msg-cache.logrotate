@@ -1,0 +1,7 @@
+/var/log/argo-msg-cache.log
+{
+    compress
+    missingok
+    copytruncate
+}
+
