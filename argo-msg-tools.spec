@@ -1,4 +1,4 @@
-Summary: Bridge from Nagios to the MSG Messaging system
+Summary: ARGO tools for MSG
 Name: argo-msg-tools
 Version: 1.0.0
 Release: 1%{?dist}
@@ -10,6 +10,9 @@ BuildArch: noarch
 Obsoletes: msg-utils
 
 %description
+ARGO tools for MSG:
+- component argo-msg-cache for extracting MSG instances from BDII and
+generating cache file.
 
 %prep
 %setup -q
@@ -28,7 +31,6 @@ install --directory ${RPM_BUILD_ROOT}/etc/cron.d
 install --mode 755 ./argo-msg-cache.cron ${RPM_BUILD_ROOT}/etc/cron.d/argo-msg-cache
 install --directory ${RPM_BUILD_ROOT}/etc/logrotate.d
 install --mode 644 ./argo-msg-cache.logrotate ${RPM_BUILD_ROOT}/etc/logrotate.d/argo-msg-cache
-install --directory ${RPM_BUILD_ROOT}/etc/msg-to-handler.d
 install --mode 644 ./argo-msg-cache.conf ${RPM_BUILD_ROOT}/etc
 install --directory ${RPM_BUILD_ROOT}/var/cache/msg/argo-msg-cache
 
@@ -57,5 +59,7 @@ fi
 :
 
 %changelog
+* Tue Mar 8 2016 Emir Imamagic <eimamagi@srce.hr> - 1.1.0-1%{?dist}
+- Added better package description.
 * Tue Oct 20 2015 Emir Imamagic <eimamagi@srce.hr> - 1.0.0-1%{?dist}
 - Initial version based on msg-utils
