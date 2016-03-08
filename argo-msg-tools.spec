@@ -1,7 +1,7 @@
 Summary: ARGO tools for MSG
 Name: argo-msg-tools
 Version: 1.0.0
-Release: 1%{?dist}
+Release: 2%{?dist}
 License: APL2
 Group: Network/Monitoring
 Source: %{name}-%{version}.tar.gz
@@ -59,7 +59,7 @@ fi
 :
 
 %changelog
-* Tue Mar 8 2016 Emir Imamagic <eimamagi@srce.hr> - 1.1.0-1%{?dist}
+* Tue Mar 8 2016 Emir Imamagic <eimamagi@srce.hr> - 1.0.0-2%{?dist}
 - Added better package description.
 * Tue Oct 20 2015 Emir Imamagic <eimamagi@srce.hr> - 1.0.0-1%{?dist}
 - Initial version based on msg-utils
