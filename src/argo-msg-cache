@@ -5,7 +5,7 @@
 
 # read the configuration file
 
-conf=/etc/argo-msg-cache.conf.conf
+conf=/etc/argo-msg-cache.conf
 if [ ! -f $conf ]; then
     echo "$conf does not exist"
     exit 1
