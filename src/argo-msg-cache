@@ -5,7 +5,7 @@
 
 # read the configuration file
 
-conf=/etc/broker-cache-file.conf
+conf=/etc/argo-msg-cache.conf.conf
 if [ ! -f $conf ]; then
     echo "$conf does not exist"
     exit 1
@@ -19,8 +19,8 @@ if [ -z "$BROKER_NETWORK" ]; then
     echo "BROKER_NETWORK is not set in $conf"
     exit 1
 fi
-cache=${BROKER_LIST:-/var/cache/msg/broker-cache-file/broker-list}
-good=${BROKER_GOOD:-/var/cache/msg/broker-cache-file/broker}
+cache=${BROKER_LIST:-/var/cache/msg/argo-msg-cache/broker-list}
+good=${BROKER_GOOD:-/var/cache/msg/argo-msg-cache/broker}
 
 # execute msg-brokers
 
